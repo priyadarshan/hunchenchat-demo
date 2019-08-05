@@ -1,0 +1,200 @@
+* A Simple Chat App with Hunchensocket
+
+  The following brief tutorial is adapted (i.e. stolen) from the Hunchensocket
+  documentation presently available on [[https://github.com/joaotavora/hunchensocket][github]]. When I tried the demo as outlined
+  there (as of Mon Aug 5 12:18:51 CDT 2019) it did not work for me. Moreover,
+  the available documentation does not include a client implementation, and
+  hence, it is missing half of the story.
+
+  I hope that this tutorial gives you a slightly kinder introduction. Enjoy!
+
+** Make a Project
+
+    First fire up your REPL and make a new project:
+
+    #+begin_example
+CL-USER> (ql:quickload :quickproject)
+To load "quickproject":
+  Load 1 ASDF system:
+    quickproject
+; Loading "quickproject"
+
+(:QUICKPROJECT)
+CL-USER> (quickproject:make-project "~/playground/hunchenchat" 
+                                    :depends-on '(hunchensocket hunchentoot))
+WARNING: Coercing "~/playground/hunchenchat" to directory
+"hunchenchat"
+CL-USER> 
+    #+end_example
+
+    Then I usually symlink to =~/quicklisp/local-projects= so that quicklisp
+    sees my new project:
+
+    : ~$ ln -s ~/playground/hunchenchat ~/quicklisp/local-projects/hunchenchat 
+
+    You should now be able to run ~(ql:quickload :hunchenchat)~ in your REPL.
+
+    Now for the server code, one piece at a time.
+
+    
+** Clients & Resources
+
+   Hunchentoot abstracts WebSocket connections as instances of the
+   ~WEBSOCKET-CLIENT~ class. From the perspective of the server, clients send
+   messages to the resources on the server and can, in turn, be sent messages
+   from the server.
+
+   In the following, a subclass of ~WEBSOCKET-CLIENT~ is defined, adding a
+   randomly generated name slot so that users can distinguish the different
+   people chatting.
+
+   #+begin_src lisp 
+
+     (defclass user (hunchensocket:websocket-client)
+       ((name :reader name :initform (format nil "~a" (random 999999) ))))
+    
+   #+end_src
+    
+   Clients interact with "resources", which are instances of the
+   ~WEBSOCKET-RESOURCE~ class. A resource must be associated with a subclass of
+   ~WEBSOCKET-CLIENT~, and each resource maintains a list of clients of that
+   associated class who are currently connected. In the case of the demo chat
+   app, ~WEBSOCKET-RESOURCE~ is subclassed in ~CHAT-ROOM~, and is associated
+   with the class ~USER~.
+
+   #+begin_src lisp
+     (defclass chat-room (hunchensocket:websocket-resource)
+       ((name :initarg :name :initform (error "Rooms must have a name") :reader name))
+       (:default-initargs :client-class 'user))
+   #+end_src
+     
+   Clients have a method ~HUNCHENSOCKET:SEND-TEXT-MESSAGE~ which pushes text
+   information out to a connected client. There is also a
+   ~SEND-BINARY-MESSAGE~, but this application does not use it. The following
+   ~BROADCAST~ function is used to send chats out to clients connected to a room:
+
+   #+begin_src lisp 
+     (defun broadcast (room message &rest args)
+       "For each client in the room, send that client a copy of the message."
+       (let ((message (apply #'format nil message args)))
+         (loop for peer in (hunchensocket:clients room)
+               do (hunchensocket:send-text-message peer message))))
+   #+end_src 
+
+   Now to define the methods that respond to new connections, to dropped
+   connections, and to new messages on current connections.
+
+   #+begin_src lisp 
+     (defmethod hunchensocket:client-connected ((room chat-room) user)
+       (broadcast room "~a has joined ~a" (name user) (name room)))
+
+     (defmethod hunchensocket:client-disconnected ((room chat-room) user)
+       (broadcast room "~a has left ~a" (name user) (name room)))
+
+     (defmethod hunchensocket:text-message-received ((room chat-room) user message)
+       (broadcast room "~a: ~a" (name user) message))
+   #+end_src
+
+
+** Setting up the Chat Server
+
+   And the following code sets up the a chat room and a WebSocket server:
+
+   #+begin_src lisp 
+     (defvar *chat-server* (make-instance 'hunchensocket:websocket-acceptor :port 12345))
+
+     (defvar *room* (make-instance 'chat-room :name "/chat"))
+        
+     (defun find-room (request) *room*)
+     (pushnew 'find-room hunchensocket:*websocket-dispatch-table*)
+   #+end_src
+
+** Setting up the Chat Client  
+
+   But now you need a web front end to actually connect to the chat server
+   from. The following sets up a simple hunchentoot handler that serves the
+   web front end:
+
+   #+begin_src lisp
+     (defvar *chat-client-server* (make-instance 'hunchentoot:easy-acceptor :port 5050))
+
+     ;; a cache for the chat client raw html.
+     (defvar chat-client-text nil)
+
+     (defun get-chat-client ()
+        (unless chat-client-text
+          (setf chat-client-text
+            (alexandria:read-file-into-string
+                "~/quicklisp/local-projects/hunchenchat/chat-client.html")))
+       chat-client-text)
+
+     (hunchentoot:define-easy-handler (chat-page :uri "/chat") ()
+       (setf (hunchentoot:content-type*) "text/html")
+       (get-chat-client))
+
+   #+end_src
+
+   The client is nothing fancy, just a simple HTML file with embedded
+   javascript to control connecting to the server and displaying chats.
+
+   #+begin_src html 
+
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Hunchenchat</title>
+</head>
+
+<body>
+    <ul id="chat-echo-area">
+    </ul>
+    <div style="position:fixed; bottom:0;">
+        <input id="chat-input" placeholder="say something" >
+    </div>
+    <script>
+     window.onload = function () {
+         const inputField = document.getElementById("chat-input");
+
+         function receivedMessage(msg) {
+             let li = document.createElement("li");
+             li.textContent = msg.data;
+             document.getElementById("chat-echo-area").appendChild(li);
+         }
+
+         const ws = new WebSocket("ws://localhost:12345/chat");
+         ws.addEventListener('message', receivedMessage);
+
+         inputField.addEventListener("keyup", (evt) => {
+             if (evt.key === "Enter") {
+                 ws.send(evt.target.value);
+                 evt.target.value = "";
+             }
+         });
+     };
+
+    </script>
+</body>
+</html>
+   
+   #+end_src
+
+** Starting and Running!
+
+   Here is a small function to start the two server processes, one for the
+   WebSocket service and one for the HTTP service.
+
+   #+begin_src lisp
+      (defun start ()
+        (hunchentoot:start *chat-server*)
+        (hunchentoot:start *chat-client-server*))
+   #+end_src
+
+   Its cool that Hunchentoot lets you start these two servers side-by-side in
+   the same Lisp image!
+
+   Now just call ~(hunchenchat::start)~ in the REPL, and open two browser tabs
+   up to ~http://localhost:5050/chat~.  You should be in business!
+
+   [[./hunchenchat.png]]
