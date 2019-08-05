@@ -39,10 +39,10 @@ CL-USER>
     
 ** Clients & Resources
 
-   Hunchentoot abstracts WebSocket connections as instances of the
+   Hunchensocket abstracts WebSocket connections as instances of the
    ~WEBSOCKET-CLIENT~ class. From the perspective of the server, clients send
-   messages to the resources on the server and can, in turn, be sent messages
-   from the server.
+   messages to "resources" on the server and can, in turn, be sent messages from
+   server actions.
 
    In the following, a subclass of ~WEBSOCKET-CLIENT~ is defined, adding a
    randomly generated name slot so that users can distinguish the different
