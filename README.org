@@ -111,9 +111,9 @@ CL-USER>
 
 ** Setting up the Chat Client  
 
-   But now you need a web front end to actually connect to the chat server
-   from. The following sets up a simple hunchentoot handler that serves the
-   web front end:
+   You also need a web front end from which connections to your freshly minted
+   chat server can be made. The following sets up a simple hunchentoot handler
+   that serves the web front end:
 
    #+begin_src lisp
      (defvar *chat-client-server* (make-instance 'hunchentoot:easy-acceptor :port 5050))
